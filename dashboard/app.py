@@ -211,6 +211,56 @@ st.markdown(
         border-radius: 4px;
     }
 
+    .action-card,
+    .explain-card {
+        background: #FFFFFF;
+        border: 1px solid var(--line);
+        border-top: 6px solid var(--coral);
+        border-radius: 5px;
+        padding: 1rem 1.05rem;
+        min-height: 245px;
+        box-shadow: 0 7px 20px rgba(24,36,51,0.055);
+        margin-bottom: 1rem;
+    }
+
+    .action-card h4,
+    .explain-card h4 {
+        margin-top: 0.2rem;
+        margin-bottom: 0.7rem;
+        color: var(--ink) !important;
+    }
+
+    .action-card p,
+    .explain-card p {
+        color: #4F5C68 !important;
+        line-height: 1.5;
+    }
+
+    .action-count {
+        display: inline-block;
+        background: #EFE7DC;
+        color: var(--ink);
+        padding: 0.25rem 0.55rem;
+        border-radius: 999px;
+        font-weight: 800;
+        margin-bottom: 0.65rem;
+    }
+
+    .step-number {
+        width: 42px;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: var(--coral);
+        color: #FFFFFF;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 1.35rem;
+        font-weight: 800;
+        margin-bottom: 0.8rem;
+    }
+
     /* Buttons and downloads */
     .stButton > button,
     .stDownloadButton > button {
@@ -308,9 +358,10 @@ except (FileNotFoundError, ValueError) as error:
     st.stop()
 
 
-st.title("Customer Value & Retention Dashboard")
+st.title("Customer Priorities & Revenue Opportunities")
 st.caption(
-    "Prioritise customers using predicted return likelihood and expected future value."
+    "Use past buying behaviour to decide who needs attention, what action to take, "
+    "and where future revenue may come from."
 )
 
 with st.sidebar:
@@ -374,31 +425,66 @@ if filtered.empty:
     st.stop()
 
 
-overview_tab, priority_tab, planning_tab, model_tab = st.tabs(
+overview_tab, priority_tab, planning_tab, explanation_tab = st.tabs(
     [
-        "Business overview",
-        "Customer priorities",
-        "Revenue planning",
-        "How the score works",
+        "What is happening?",
+        "Who needs attention?",
+        "What should we do?",
+        "What do the numbers mean?",
     ]
 )
 
 with overview_tab:
+    st.subheader("A quick view for management")
+    st.write(
+        "This page turns past customer activity into a practical view of likely future "
+        "revenue. Use the filters on the left to focus on a country, customer group, "
+        "or level of buying interest."
+    )
+
     customers = len(filtered)
     total_value = filtered["PredictedCLV"].sum()
     average_probability = filtered["RepeatProbability"].mean()
     at_risk = filtered[filtered["BusinessAction"] == "Win back now"]
+    protected = filtered[filtered["BusinessAction"] == "Protect loyalty"]
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Customers selected", f"{customers:,}")
-    kpi2.metric("Expected future value", money(total_value))
-    kpi3.metric("Average return likelihood", f"{average_probability:.1%}")
-    kpi4.metric("High-value customers at risk", f"{len(at_risk):,}")
+    kpi1.metric(
+        "Customers in this view",
+        f"{customers:,}",
+        help="Number of customers remaining after the filters are applied.",
+    )
+    kpi2.metric(
+        "Likely future revenue",
+        money(total_value),
+        help="Estimated revenue from these customers during the future period.",
+    )
+    kpi3.metric(
+        "Average chance of buying again",
+        f"{average_probability:.0%}",
+        help="The average predicted chance that a selected customer returns.",
+    )
+    kpi4.metric(
+        "Valuable customers needing attention",
+        f"{len(at_risk):,}",
+        help="Customers with strong spending potential but a lower chance of returning.",
+    )
 
+    country_value = (
+        filtered.groupby("PrimaryCountry", observed=True)["PredictedCLV"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    leading_country = country_value.index[0]
     st.markdown(
-        "<div class='business-note'><b>Management focus:</b> "
-        "Protect high-value loyal customers and prioritise ‘Win back now’ customers "
-        "for targeted retention campaigns.</div>",
+        f"""
+        <div class='business-note'>
+        <b>What management can take from this view</b><br>
+        • <b>{len(at_risk):,}</b> valuable customers may need a reason to return.<br>
+        • <b>{len(protected):,}</b> valuable and loyal customers should receive reliable service and recognition.<br>
+        • <b>{leading_country}</b> contributes the largest share of likely future revenue in the current view.
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -406,27 +492,41 @@ with overview_tab:
     with left:
         segment_summary = (
             filtered.groupby("CLVSegment", observed=False)
-            .agg(Customers=("CustomerID", "count"), ExpectedValue=("PredictedCLV", "sum"))
+            .agg(
+                Customers=("CustomerID", "count"),
+                LikelyRevenue=("PredictedCLV", "sum"),
+            )
             .reset_index()
         )
+        segment_summary["Label"] = segment_summary["LikelyRevenue"].map(money)
         figure = px.bar(
             segment_summary,
             x="CLVSegment",
-            y="ExpectedValue",
+            y="LikelyRevenue",
             color="CLVSegment",
             category_orders={"CLVSegment": SEGMENT_ORDER},
             color_discrete_map=SEGMENT_COLORS,
-            text_auto=".3s",
-            title="Expected value by customer segment",
-            labels={"CLVSegment": "Segment", "ExpectedValue": "Expected future value"},
+            text="Label",
+            title="Where is the likely revenue?",
+            labels={
+                "CLVSegment": "Customer value group",
+                "LikelyRevenue": "Likely future revenue",
+            },
         )
-        figure.update_layout(showlegend=False, yaxis_tickprefix=CURRENCY)
+        figure.update_traces(textposition="outside", cliponaxis=False)
+        figure.update_layout(showlegend=False, height=500, bargap=0.28)
+        figure.update_yaxes(tickprefix=CURRENCY)
         st.plotly_chart(figure, use_container_width=True)
+        st.caption(
+            "Taller bars represent customer groups expected to contribute more future revenue."
+        )
 
     with right:
         action_summary = (
             filtered.groupby("BusinessAction", observed=True)
             .agg(Customers=("CustomerID", "count"))
+            .reindex(ACTION_ORDER)
+            .fillna(0)
             .reset_index()
         )
         figure = px.bar(
@@ -435,146 +535,233 @@ with overview_tab:
             y="BusinessAction",
             orientation="h",
             color="BusinessAction",
-            category_orders={"BusinessAction": ACTION_ORDER},
+            category_orders={"BusinessAction": ACTION_ORDER[::-1]},
             color_discrete_map=ACTION_COLORS,
             text="Customers",
-            title="Customers by recommended action",
-            labels={"BusinessAction": "Recommended action"},
+            title="What action does each customer need?",
+            labels={
+                "BusinessAction": "Suggested action",
+                "Customers": "Number of customers",
+            },
         )
-        figure.update_layout(showlegend=False)
+        figure.update_traces(textposition="outside", cliponaxis=False)
+        figure.update_layout(showlegend=False, height=500)
         st.plotly_chart(figure, use_container_width=True)
+        st.caption(
+            "Use these groups to choose the right level and type of customer contact."
+        )
 
-    display_scatter = filtered.nlargest(min(len(filtered), 1500), "PredictedCLV")
+    st.subheader("See the opportunity and risk together")
+    st.write(
+        "Each circle is one customer. Move right for a greater chance of buying again; "
+        "move upward for greater spending potential. Larger circles represent more likely revenue."
+    )
+
     probability_cutoff = data["RepeatProbability"].median()
     revenue_cutoff = data["ConditionalFutureRevenue"].median()
+    visible_limit = filtered["ConditionalFutureRevenue"].quantile(0.99)
+    display_scatter = filtered[
+        filtered["ConditionalFutureRevenue"] <= visible_limit
+    ].copy()
+    display_scatter["ChanceOfReturn"] = display_scatter["RepeatProbability"] * 100
+
     scatter = px.scatter(
         display_scatter,
-        x="RepeatProbability",
+        x="ChanceOfReturn",
         y="ConditionalFutureRevenue",
         size="PredictedCLV",
         color="BusinessAction",
         color_discrete_map=ACTION_COLORS,
         hover_name="CustomerID",
         hover_data={
-            "CLVSegment": True,
             "PrimaryCountry": True,
-            "PredictedCLV": ":,.0f",
-            "RepeatProbability": ":.1%",
+            "CLVSegment": True,
+            "ChanceOfReturn": ":.0f",
             "ConditionalFutureRevenue": ":,.0f",
+            "PredictedCLV": ":,.0f",
         },
         title="Customer opportunity map",
         labels={
-            "RepeatProbability": "Return likelihood",
-            "ConditionalFutureRevenue": "Revenue if the customer returns",
-            "BusinessAction": "Recommended action",
+            "ChanceOfReturn": "Chance of buying again (%)",
+            "ConditionalFutureRevenue": "Potential spending if the customer returns",
+            "BusinessAction": "Suggested action",
         },
-        log_y=True,
-        size_max=38,
+        size_max=28,
+        opacity=0.62,
     )
-    scatter.add_vline(x=probability_cutoff, line_dash="dash", line_color="#75808A")
-    scatter.add_hline(y=revenue_cutoff, line_dash="dash", line_color="#75808A")
-    scatter.update_xaxes(tickformat=".0%")
-    scatter.update_yaxes(tickprefix=CURRENCY)
+    scatter.add_vline(
+        x=probability_cutoff * 100,
+        line_dash="dash",
+        line_color="#5B6570",
+        line_width=2,
+    )
+    scatter.add_hline(
+        y=revenue_cutoff,
+        line_dash="dash",
+        line_color="#5B6570",
+        line_width=2,
+    )
+    quadrant_style = dict(
+        showarrow=False,
+        font=dict(size=13, color="#182433"),
+        bgcolor="rgba(255,255,255,0.88)",
+        bordercolor="#DED5C8",
+        borderpad=5,
+    )
+    scatter.add_annotation(xref="paper", yref="paper", x=0.02, y=0.96, text="WIN BACK", **quadrant_style)
+    scatter.add_annotation(xref="paper", yref="paper", x=0.98, y=0.96, text="PROTECT LOYALTY", xanchor="right", **quadrant_style)
+    scatter.add_annotation(xref="paper", yref="paper", x=0.98, y=0.04, text="GROW VALUE", xanchor="right", **quadrant_style)
+    scatter.add_annotation(xref="paper", yref="paper", x=0.02, y=0.04, text="LOW-COST NURTURE", **quadrant_style)
+    scatter.update_layout(height=650, legend=dict(orientation="h", y=1.12))
+    scatter.update_xaxes(range=[0, 100], ticksuffix="%")
+    scatter.update_yaxes(tickprefix=CURRENCY, range=[0, visible_limit * 1.05])
     st.plotly_chart(scatter, use_container_width=True)
     st.caption(
-        "Dashed lines show the portfolio medians used to form the four action groups. "
-        "The revenue axis uses a log scale because a small number of customers have exceptionally high values."
+        "For readability, the chart hides the most extreme 1% of spending estimates. "
+        "They remain included in all totals, tables and calculations."
     )
 
 with priority_tab:
-    st.subheader("Customer action list")
+    st.subheader("Turn the customer groups into actions")
     st.write(
-        "Start with customers carrying the highest expected value, then use the recommended "
-        "action to select the appropriate campaign."
+        "The same offer should not be sent to everyone. These four groups indicate the "
+        "purpose of the contact—not a guaranteed customer response."
     )
 
+    action_columns = st.columns(4)
+    action_text = [
+        ("Protect loyalty", "High return chance and high value", "Recognise loyalty, protect service quality and avoid preventable loss."),
+        ("Win back now", "Lower return chance but high value", "Use a personal reminder, service call or carefully chosen return offer."),
+        ("Grow customer value", "High return chance but lower value", "Recommend useful bundles, related products or a larger next purchase."),
+        ("Low-cost nurture", "Lower return chance and lower value", "Use affordable email or automated communication rather than costly offers."),
+    ]
+    for column, (name, meaning, action) in zip(action_columns, action_text):
+        count = int((filtered["BusinessAction"] == name).sum())
+        with column:
+            st.markdown(
+                f"""
+                <div class='action-card' style='border-top-color:{ACTION_COLORS[name]}'>
+                <h4>{name}</h4>
+                <div class='action-count'>{count:,} customers</div>
+                <p><b>Meaning:</b> {meaning}</p>
+                <p><b>Practical action:</b> {action}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.subheader("Customer contact list")
+    st.write(
+        "Choose how to rank the list, then download it for campaign planning. "
+        "Start from the top and work within your available budget and staff capacity."
+    )
     sort_choice = st.selectbox(
-        "Rank customers by",
-        ["Expected value", "Revenue if returned", "Return likelihood", "Recency"],
+        "Show the most important customers first based on:",
+        [
+            "Likely future revenue",
+            "Potential spending if they return",
+            "Chance of buying again",
+            "Longest time since last purchase",
+        ],
     )
     sort_map = {
-        "Expected value": ("PredictedCLV", False),
-        "Revenue if returned": ("ConditionalFutureRevenue", False),
-        "Return likelihood": ("RepeatProbability", False),
-        "Recency": ("RecencyDays", True),
+        "Likely future revenue": ("PredictedCLV", False),
+        "Potential spending if they return": ("ConditionalFutureRevenue", False),
+        "Chance of buying again": ("RepeatProbability", False),
+        "Longest time since last purchase": ("RecencyDays", False),
     }
     sort_column, ascending = sort_map[sort_choice]
     ranked = filtered.sort_values(sort_column, ascending=ascending).copy()
+    next_step = {
+        "Protect loyalty": "Recognition and reliable service",
+        "Win back now": "Personal return campaign",
+        "Grow customer value": "Cross-sell or useful bundle",
+        "Low-cost nurture": "Automated low-cost contact",
+    }
+    ranked["SuggestedNextStep"] = ranked["BusinessAction"].map(next_step)
 
     table = ranked[
         [
             "CustomerID",
             "PrimaryCountry",
-            "CLVSegment",
             "BusinessAction",
+            "SuggestedNextStep",
             "RepeatProbability",
             "ConditionalFutureRevenue",
             "PredictedCLV",
             "RecencyDays",
             "Frequency",
-            "MonetaryValue",
         ]
     ].rename(
         columns={
             "PrimaryCountry": "Country",
-            "CLVSegment": "Value segment",
-            "BusinessAction": "Recommended action",
-            "RepeatProbability": "Return likelihood",
-            "ConditionalFutureRevenue": "Revenue if returned",
-            "PredictedCLV": "Expected value",
-            "RecencyDays": "Days since purchase",
-            "Frequency": "Past orders",
-            "MonetaryValue": "Past spending",
+            "BusinessAction": "Customer group",
+            "SuggestedNextStep": "Suggested next step",
+            "RepeatProbability": "Chance of buying again",
+            "ConditionalFutureRevenue": "Potential spending if returned",
+            "PredictedCLV": "Likely future revenue",
+            "RecencyDays": "Days since last purchase",
+            "Frequency": "Previous orders",
         }
     )
-    table["Return likelihood"] = table["Return likelihood"] * 100
+    table["Chance of buying again"] = table["Chance of buying again"] * 100
     st.dataframe(
         table,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Return likelihood": st.column_config.ProgressColumn(
-                format="%.1f%%", min_value=0, max_value=100
+            "Chance of buying again": st.column_config.ProgressColumn(
+                format="%.0f%%", min_value=0, max_value=100
             ),
-            "Revenue if returned": st.column_config.NumberColumn(format=f"{CURRENCY}%.2f"),
-            "Expected value": st.column_config.NumberColumn(format=f"{CURRENCY}%.2f"),
-            "Past spending": st.column_config.NumberColumn(format=f"{CURRENCY}%.2f"),
+            "Potential spending if returned": st.column_config.NumberColumn(
+                format=f"{CURRENCY}%.0f"
+            ),
+            "Likely future revenue": st.column_config.NumberColumn(
+                format=f"{CURRENCY}%.0f"
+            ),
         },
-        height=520,
+        height=600,
     )
     st.download_button(
-        "Download selected customer list",
+        "Download this customer list",
         ranked.to_csv(index=False).encode("utf-8"),
-        file_name="selected_customer_priorities.csv",
+        file_name="customer_action_list.csv",
         mime="text/csv",
     )
 
 with planning_tab:
-    st.subheader("Campaign scenario calculator")
+    st.subheader("Test a campaign idea before spending money")
     st.write(
-        "Estimate the commercial value of a proposed campaign before launch. "
-        "This is a planning scenario—not a measured causal effect."
+        "Adjust the assumptions below to see whether a campaign could be worthwhile. "
+        "The result is a planning estimate, not a promise of profit."
     )
 
     controls, results = st.columns([1, 2])
     with controls:
+        st.markdown("#### Your campaign assumptions")
         campaign_actions = st.multiselect(
-            "Target action groups",
+            "Which customer groups will receive the campaign?",
             ACTION_ORDER,
             default=["Win back now"],
             key="campaign_actions",
         )
         uplift_points = st.slider(
-            "Assumed increase in return probability",
+            "How much could the campaign improve the chance of return?",
             0.0,
             20.0,
             5.0,
             0.5,
-            help="For example, 5% means an assumed five-percentage-point increase.",
+            help="Five points means that a 40% return chance is assumed to become 45%.",
         )
-        gross_margin = st.slider("Gross margin", 0, 100, 30, 1)
+        gross_margin = st.slider(
+            "How much of sales revenue becomes gross profit?",
+            0,
+            100,
+            30,
+            1,
+        )
         contact_cost = st.number_input(
-            "Campaign cost per customer",
+            "Cost to contact one customer",
             min_value=0.0,
             value=5.0,
             step=0.5,
@@ -586,147 +773,193 @@ with planning_tab:
     campaign["EffectiveUplift"] = np.minimum(
         uplift, 1 - campaign["RepeatProbability"]
     )
-    campaign["IncrementalRevenue"] = (
+    campaign["ExtraRevenue"] = (
         campaign["EffectiveUplift"] * campaign["ConditionalFutureRevenue"]
     )
-    campaign["IncrementalProfit"] = (
-        campaign["IncrementalRevenue"] * (gross_margin / 100) - contact_cost
+    campaign["ExtraProfit"] = (
+        campaign["ExtraRevenue"] * (gross_margin / 100) - contact_cost
     )
-    campaign["RecommendedForCampaign"] = campaign["IncrementalProfit"] > 0
-    recommended = campaign[campaign["RecommendedForCampaign"]]
+    recommended = campaign[campaign["ExtraProfit"] > 0]
 
     with results:
         r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Customers targeted", f"{len(campaign):,}")
-        r2.metric("Positive-profit customers", f"{len(recommended):,}")
-        r3.metric("Estimated incremental profit", money(recommended["IncrementalProfit"].sum()))
-        spend = len(recommended) * contact_cost
-        roi = recommended["IncrementalProfit"].sum() / spend if spend > 0 else np.nan
-        r4.metric("Estimated ROI", "N/A" if np.isnan(roi) else f"{roi:.1%}")
+        r1.metric("Customers considered", f"{len(campaign):,}")
+        r2.metric("Worth contacting under these assumptions", f"{len(recommended):,}")
+        total_extra_profit = recommended["ExtraProfit"].sum()
+        r3.metric("Possible extra profit", money(total_extra_profit))
+        campaign_spend = len(recommended) * contact_cost
+        roi = total_extra_profit / campaign_spend if campaign_spend > 0 else np.nan
+        r4.metric("Possible return per campaign pound", "N/A" if np.isnan(roi) else f"{roi:.1f}×")
 
         if campaign.empty:
-            st.info("Select at least one action group to calculate a scenario.")
+            st.info("Select at least one customer group to calculate the scenario.")
         else:
-            scenario_chart = campaign.nlargest(25, "IncrementalProfit").sort_values(
-                "IncrementalProfit"
-            )
-            colors = np.where(
-                scenario_chart["IncrementalProfit"] > 0, "#3A7D6F", "#C65D47"
-            )
+            scenario_chart = campaign.nlargest(20, "ExtraProfit").sort_values("ExtraProfit")
+            colors = np.where(scenario_chart["ExtraProfit"] > 0, "#3A7D6F", "#C65D47")
             figure = go.Figure(
                 go.Bar(
-                    x=scenario_chart["IncrementalProfit"],
+                    x=scenario_chart["ExtraProfit"],
                     y=scenario_chart["CustomerID"],
                     orientation="h",
                     marker_color=colors,
-                    hovertemplate="Customer %{y}<br>Estimated profit: £%{x:,.2f}<extra></extra>",
+                    text=scenario_chart["ExtraProfit"].map(money),
+                    textposition="outside",
+                    cliponaxis=False,
+                    hovertemplate="Customer %{y}<br>Possible extra profit: £%{x:,.0f}<extra></extra>",
                 )
             )
             figure.update_layout(
-                title="Top campaign opportunities under this scenario",
-                xaxis_title="Estimated incremental profit",
-                yaxis_title="Customer ID",
+                title="Customers with the strongest campaign opportunity",
+                xaxis_title="Possible extra profit",
+                yaxis_title="Customer",
                 xaxis_tickprefix=CURRENCY,
-                height=550,
+                height=620,
+                margin=dict(l=70, r=100, t=70, b=45),
             )
             st.plotly_chart(figure, use_container_width=True)
 
     st.markdown(
-        "<div class='warning-note'><b>Scenario formula:</b> assumed probability uplift × "
-        "revenue if returned × gross margin − contact cost. The uplift is a management "
-        "assumption and must be validated through a controlled experiment.</div>",
+        "<div class='warning-note'><b>Use this as a planning guide.</b> "
+        "The dashboard assumes that your campaign improves the chance of return by the amount "
+        "you selected. Run a small controlled campaign before committing a large budget.</div>",
         unsafe_allow_html=True,
     )
+
+    with st.expander("How is the campaign estimate calculated?"):
+        st.write(
+            "For each customer, the dashboard estimates additional sales from the assumed "
+            "improvement in return chance. It then keeps the gross-profit portion and subtracts "
+            "the cost of contacting that customer."
+        )
+        st.code(
+            "Possible extra profit = improvement in return chance × potential spending "
+            "× gross margin − contact cost",
+            language=None,
+        )
 
     country_summary = (
         filtered.groupby("PrimaryCountry", observed=True)
         .agg(
             Customers=("CustomerID", "count"),
-            ExpectedValue=("PredictedCLV", "sum"),
-            AverageReturnLikelihood=("RepeatProbability", "mean"),
+            LikelyRevenue=("PredictedCLV", "sum"),
         )
         .reset_index()
-        .nlargest(12, "ExpectedValue")
+        .nlargest(12, "LikelyRevenue")
+        .sort_values("LikelyRevenue")
     )
+    country_summary["Label"] = country_summary["LikelyRevenue"].map(money)
     country_figure = px.bar(
-        country_summary.sort_values("ExpectedValue"),
-        x="ExpectedValue",
+        country_summary,
+        x="LikelyRevenue",
         y="PrimaryCountry",
         orientation="h",
-        color="AverageReturnLikelihood",
+        text="Label",
+        color="LikelyRevenue",
         color_continuous_scale=["#F0E4D1", "#355C7D"],
-        title="Markets contributing the most expected value",
+        title="Countries with the greatest likely future revenue",
         labels={
-            "ExpectedValue": "Expected future value",
+            "LikelyRevenue": "Likely future revenue",
             "PrimaryCountry": "Country",
-            "AverageReturnLikelihood": "Avg. return likelihood",
         },
     )
+    country_figure.update_traces(textposition="outside", cliponaxis=False)
+    country_figure.update_layout(height=600, coloraxis_showscale=False)
     country_figure.update_xaxes(tickprefix=CURRENCY)
     st.plotly_chart(country_figure, use_container_width=True)
 
-with model_tab:
-    st.subheader("How the customer score is calculated")
+with explanation_tab:
+    st.subheader("What the dashboard did—in everyday language")
+    st.write(
+        "The dashboard reviewed each customer’s past buying pattern. It then answered two "
+        "simple questions and combined the answers into one useful revenue estimate."
+    )
+
+    step1, step2, step3 = st.columns(3)
+    with step1:
+        st.markdown(
+            """
+            <div class='explain-card'>
+            <div class='step-number'>1</div>
+            <h4>Will this customer buy again?</h4>
+            <p>We estimate a chance from 0% to 100% using the customer’s previous buying behaviour.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with step2:
+        st.markdown(
+            """
+            <div class='explain-card'>
+            <div class='step-number'>2</div>
+            <h4>If they return, how much might they spend?</h4>
+            <p>We estimate possible future spending from order size, frequency and product variety.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with step3:
+        st.markdown(
+            """
+            <div class='explain-card'>
+            <div class='step-number'>3</div>
+            <h4>What revenue can we reasonably expect?</h4>
+            <p>We combine the chance of return with the amount the customer may spend.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    median_value = filtered["PredictedCLV"].median()
+    example_index = (filtered["PredictedCLV"] - median_value).abs().idxmin()
+    example = filtered.loc[example_index]
+    st.subheader("A simple customer example")
+    e1, e2, e3 = st.columns(3)
+    e1.metric("Chance of buying again", f"{example['RepeatProbability']:.0%}")
+    e2.metric("Possible spending if they return", money(example["ConditionalFutureRevenue"]))
+    e3.metric("Likely future revenue", money(example["PredictedCLV"]))
+    st.markdown(
+        f"""
+        <div class='business-note'>
+        For customer <b>{example['CustomerID']}</b>, the dashboard combines a
+        <b>{example['RepeatProbability']:.0%}</b> chance of buying again with approximately
+        <b>{money(example['ConditionalFutureRevenue'])}</b> of possible spending.
+        This gives approximately <b>{money(example['PredictedCLV'])}</b> in likely future revenue.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("How much confidence should management place in it?")
+    q1, q2, q3 = st.columns(3)
+    q1.metric("Return-customer ranking score", "79 / 100")
+    q2.metric("Future revenue pattern explained", "68%")
+    q3.metric("Average revenue estimation error", f"{CURRENCY}1,048")
+    st.write(
+        "The 79/100 score means the model is generally good at ranking a returning customer "
+        "above a non-returning customer. Overall, these results are useful for prioritising "
+        "customers, but they are not perfect forecasts or guarantees."
+    )
+
     st.markdown(
         """
-        The dashboard combines two predictions for each customer:
-
-        1. **Return likelihood:** a logistic regression estimates the probability that the
-           customer purchases again.
-        2. **Revenue if returned:** a conditional revenue regression estimates how much
-           revenue the customer may generate if they return.
-
-        **Expected customer value = Return likelihood × Revenue if returned**
-        """
+        <div class='warning-note'>
+        <b>Important limits</b><br>
+        • The dashboard learns from past behaviour; unusual future events may change customer decisions.<br>
+        • “Likely future revenue” is revenue, not final profit.<br>
+        • A high score does not guarantee that one customer will return.<br>
+        • Campaign results should be tested with a small control group before a large rollout.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    example = filtered.sort_values("PredictedCLV", ascending=False).iloc[0]
-    e1, e2, e3 = st.columns(3)
-    e1.metric("Example return likelihood", f"{example['RepeatProbability']:.1%}")
-    e2.metric("Example revenue if returned", money(example["ConditionalFutureRevenue"]))
-    e3.metric("Example expected value", money(example["PredictedCLV"]))
-
-    st.latex(
-        r"\widehat{CLV}_i = \widehat{P}(\mathrm{return}_i) "
-        r"\times \widehat{E}(\mathrm{future\ revenue}_i\mid\mathrm{return}_i)"
-    )
-
-    left, right = st.columns(2)
-    with left:
-        st.markdown(
-            """
-            **Inputs used for return likelihood**
-
-            - Days since the last purchase
-            - Purchase frequency
-            - Historical monetary value
-            - Average order value
-            - Total quantity purchased
-            - Product diversity
-            - UK/non-UK indicator
-            """
+    with st.expander("Technical details for anyone who wants them"):
+        st.write(
+            "The return estimate comes from a logistic regression. The spending estimate "
+            "comes from a conditional linear regression trained only on returning customers. "
+            "The final expected value is the return probability multiplied by conditional revenue."
         )
-    with right:
         st.markdown(
-            """
-            **Inputs used for conditional revenue**
-
-            - Days since the last purchase
-            - Purchase frequency
-            - Average order value
-            - Total quantity purchased
-            - Product diversity
-            - UK/non-UK indicator
-            """
+            "**Information used:** days since last purchase, previous order frequency, "
+            "past spending, average order size, quantity, product variety and UK/non-UK location."
         )
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Return-model ROC–AUC", "0.790")
-    m2.metric("Revenue-model R²", "0.681")
-    m3.metric("Revenue-model MAE", f"{CURRENCY}1,048")
-
-    st.info(
-        "This score estimates future-period revenue, not complete lifetime profit. "
-        "It supports prioritisation but should be combined with commercial judgement, "
-        "campaign capacity and controlled testing."
-    )
